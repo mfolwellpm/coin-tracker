@@ -118,8 +118,9 @@ function switchTab(tab) {
 }
 
 function loadData() {
-  document.getElementById(curTab).innerHTML = '<div class="spin">Loading&#8230;</div>';
-  api({ action: "getAll" }).then(function(data) {
+  var tab = curTab;
+  document.getElementById(tab).innerHTML = '<div class="spin">Loading&#8230;</div>';
+  return api({ action: "getAll" }).then(function(data) {
     members = data.members || [];
     activity = (data.activity || []).slice().reverse();
     if (curTab === "lb") renderLB();
@@ -127,11 +128,18 @@ function loadData() {
     else renderAdmin();
   }).catch(function(e) {
     showToast("Could not load data: " + e.message);
+    if (tab !== "ad") {
+      document.getElementById(tab).innerHTML =
+        '<div class="empty">Could not load data (' + esc(e.message) + ').' +
+        '<div class="mt10"><button class="btn out sm" onclick="loadData()">&#x21BB; Try again</button></div></div>';
+    } else {
+      renderAdmin();
+    }
   });
 }
 
 function esc(s) {
-  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
 
 function empty(msg) {
@@ -185,11 +193,11 @@ function renderAdmin() {
   }
   var mlist = members.length === 0
     ? '<div style="color:#aaa;font-size:13px;text-align:center;padding:8px 0">No members yet.</div>'
-    : members.map(function(m) {
+    : members.map(function(m, i) {
         return '<div class="mr">' +
           '<span class="mn">' + esc(m.name) + '</span>' +
           '<span class="mc">' + m.coins + ' &#x1FA99;</span>' +
-          '<button class="btn ico" onclick="removeMember(\'' + m.id + '\',\'' + esc(m.name) + '\')">&#x2715;</button>' +
+          '<button class="btn ico" onclick="removeMember(' + i + ')">&#x2715;</button>' +
           '</div>';
       }).join("");
   var opts = members.map(function(m) {
@@ -239,10 +247,18 @@ function renderAdmin() {
   });
 }
 
+var pendingConfirm = null;
+function runConfirm() {
+  var fn = pendingConfirm;
+  pendingConfirm = null;
+  if (fn) fn();
+}
+
 function confirmBtn(id, label, fn) {
+  pendingConfirm = fn;
   document.getElementById(id).innerHTML =
     '<div class="crow">' +
-    '<button class="btn red" style="flex:1" onclick="(' + fn.toString() + ')()">' + label + '</button>' +
+    '<button class="btn red" style="flex:1" onclick="runConfirm()">' + label + '</button>' +
     '<button class="btn gray" style="flex:1" onclick="renderAdmin()">Cancel</button>' +
     '</div>';
 }
@@ -284,17 +300,22 @@ function addMember() {
   run(function() { return api({ action: "addMember", name: name }); }, "Added " + name + "!");
 }
 
-function removeMember(id, name) {
-  run(function() { return api({ action: "removeMember", id: id }); }, "Removed " + name);
+function removeMember(i) {
+  var m = members[i];
+  if (!m) return;
+  run(function() { return api({ action: "removeMember", id: m.id }); }, "Removed " + m.name);
 }
 
 function adjustCoins(remove) {
   var aTo = document.getElementById("ato").value;
-  var aAmt = parseInt(document.getElementById("aamt").value);
+  var aAmt = parseInt(document.getElementById("aamt").value, 10);
   var aRs = document.getElementById("ars").value.trim();
-  if (!aTo || aAmt < 1) return;
+  if (!aTo) { showToast("Pick a team member first"); return; }
+  if (!(aAmt >= 1)) { showToast("Enter a number of coins (1 or more)"); return; }
   var rec = members.find(function(m){ return String(m.id) === String(aTo); });
-  var actual = remove ? Math.min(aAmt, parseInt(rec.coins)) : aAmt;
+  if (!rec) { showToast("Member not found, try Refresh"); return; }
+  var actual = remove ? Math.min(aAmt, parseInt(rec.coins, 10) || 0) : aAmt;
+  if (remove && actual < 1) { showToast(rec.name + " has no coins to remove"); return; }
   var final = remove ? -actual : actual;
   var msg = remove
     ? "Removed " + actual + " coin" + (actual !== 1 ? "s" : "") + " from " + rec.name
